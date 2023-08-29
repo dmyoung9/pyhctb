@@ -1,9 +1,10 @@
 [tool.poetry]
 name = "pyhctb"
-version = "0.0.1"
+version = "0.0.2"
 description = ""
 authors = ["David Young <dmyoung9@asu.edu>"]
 readme = "README.md"
+homepage = "https://www.github.com/dmyoung9/pyhctb/"
 
 [tool.poetry.dependencies]
 python = "^3.11"
