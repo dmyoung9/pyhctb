@@ -52,7 +52,7 @@ class HctbApi:
         cookie_str = "; ".join([f"{name}={value}" for name, value in cookies.items()])
         self.headers["cookie"] = cookie_str
 
-    def _get_passenger_data(self, driver: WebDriver) -> dict:
+    def _get_passenger_data(self, driver: WebDriver) -> Optional[dict]:
         selected_options = driver.find_elements(
             By.CSS_SELECTOR, 'option[selected="selected"]'
         )
@@ -69,7 +69,7 @@ class HctbApi:
                 "wait": "false",
             }
 
-        raise PassengerDataException()
+        return None
 
     @staticmethod
     def _parse_coordinates(
@@ -113,8 +113,13 @@ class HctbApi:
     def get_bus_data(self) -> dict:
         with _build_webdriver(options=self.browser_options) as driver:
             cookies = self.authenticate(driver)
+            if cookies is None:
+                raise InvalidAuthorizationException()
+
             self._update_headers_with_cookies(cookies)
 
             passenger_data = self._get_passenger_data(driver)
+            if passenger_data is None:
+                raise PassengerDataException()
 
         return self._get_api_response(passenger_data)
