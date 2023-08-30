@@ -84,7 +84,9 @@ class HctbApi:
         return None, None
 
     def _get_api_response(self, passenger_data) -> dict:
-        response = requests.post(REFRESH_URL, headers=self.headers, json=passenger_data)
+        response = requests.post(
+            REFRESH_URL, headers=self.headers, json=passenger_data, timeout=5
+        )
 
         passenger_data.pop("wait", None)
 
