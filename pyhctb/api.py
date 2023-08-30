@@ -1,6 +1,7 @@
 import re
+from typing import Optional, Tuple, Union
+
 import requests
-from typing import List, Optional, Tuple, Union
 
 from selenium import webdriver
 from selenium.webdriver.remote.webdriver import WebDriver
@@ -45,10 +46,10 @@ class HctbApi:
         driver.find_element(By.NAME, ELEMENTS["auth_button"]).click()
         driver.implicitly_wait(10)
 
-        return driver.get_cookies()
+        return {cookie["name"]: str(cookie["value"]) for cookie in driver.get_cookies()}
 
-    def _update_headers_with_cookies(self, cookies: List[dict]) -> None:
-        cookie_str = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
+    def _update_headers_with_cookies(self, cookies: dict[str, str]) -> None:
+        cookie_str = "; ".join([f"{name}={value}" for name, value in cookies.items()])
         self.headers["cookie"] = cookie_str
 
     def _get_passenger_data(self, driver: WebDriver) -> dict:
@@ -104,7 +105,7 @@ class HctbApi:
             with _build_webdriver(options=self.browser_options) as driver:
                 cookies = self._perform_login(driver)
 
-        if ".ASPXFORMSAUTH" not in [cookie["name"] for cookie in cookies]:
+        if ".ASPXFORMSAUTH" not in cookies:
             raise InvalidAuthorizationException()
 
         return cookies
