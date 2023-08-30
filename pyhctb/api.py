@@ -1,3 +1,5 @@
+"""API for getting data from Here Comes The Bus"""
+
 import re
 from typing import Optional, Tuple, Union
 
@@ -28,6 +30,8 @@ def _build_webdriver(options: ArgOptions) -> WebDriver:
 
 
 class HctbApi:
+    """API client class for Here Comes The Bus"""
+
     def __init__(self, username: str, password: str, code: str):
         self.username = username
         self.password = password
@@ -36,7 +40,7 @@ class HctbApi:
         self.browser_options = _build_browser_options()
         self.headers = HEADERS
 
-    def _perform_login(self, driver: WebDriver):
+    def _perform_login(self, driver: WebDriver) -> dict[str, str]:
         driver.get(AUTH_URL)
 
         driver.find_element(By.NAME, ELEMENTS["user"]).send_keys(self.username)
@@ -98,7 +102,8 @@ class HctbApi:
             "error": f"Request unsuccessful: {response.status_code}",
         }
 
-    def authenticate(self, driver: Optional[WebDriver] = None):
+    def authenticate(self, driver: Optional[WebDriver] = None) -> dict:
+        """Authenticate and retrieve cookies from HCTB."""
         if driver is not None:
             cookies = self._perform_login(driver)
         else:
@@ -111,6 +116,7 @@ class HctbApi:
         return cookies
 
     def get_bus_data(self) -> dict:
+        """Get bus coordinate response from HCTB."""
         with _build_webdriver(options=self.browser_options) as driver:
             cookies = self.authenticate(driver)
             if cookies is None:
