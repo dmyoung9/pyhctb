@@ -11,7 +11,11 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.options import ArgOptions
 
 from . import AUTH_URL, BUS_PUSHPIN_REGEX, ELEMENTS, HEADERS, REFRESH_URL
-from .exceptions import InvalidAuthorizationException, PassengerDataException
+from .exceptions import (
+    InvalidAuthorizationException,
+    PassengerDataException,
+    UnsuccessfulRequestException,
+)
 
 
 def _build_browser_options() -> ArgOptions:
@@ -90,18 +94,15 @@ class HctbApi:
 
         passenger_data.pop("wait", None)
 
-        if response.ok:
-            response_json = response.json()
-            latitude, longitude = HctbApi._parse_coordinates(response_json["d"])
+        if not response.ok:
+            raise UnsuccessfulRequestException(response.status_code)
 
-            return passenger_data | {
-                "latitude": latitude,
-                "longitude": longitude,
-            }
+        response_json = response.json()
+        latitude, longitude = HctbApi._parse_coordinates(response_json["d"])
 
-        return {
-            "success": False,
-            "error": f"Request unsuccessful: {response.status_code}",
+        return passenger_data | {
+            "latitude": latitude,
+            "longitude": longitude,
         }
 
     def authenticate(self, driver: Optional[WebDriver] = None) -> dict:
@@ -130,4 +131,7 @@ class HctbApi:
             if passenger_data is None:
                 raise PassengerDataException()
 
-        return self._get_api_response(passenger_data)
+        try:
+            return self._get_api_response(passenger_data)
+        except UnsuccessfulRequestException as ure:
+            raise ure
