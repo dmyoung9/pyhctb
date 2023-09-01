@@ -85,7 +85,7 @@ class HctbApi:
     def _get_api_response(self, time_span_id: str) -> str:
         response = self.browser.post(
             REFRESH_URL,
-            json={**self.passenger_info, "ScheduleId": time_span_id, "wait": "false"},
+            json={**self.passenger_info, "timeSpanId": time_span_id, "wait": "false"},
             timeout=5,
         )
 
