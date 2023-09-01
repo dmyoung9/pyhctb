@@ -2,7 +2,7 @@
 
 from datetime import datetime
 import re
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Optional, Union
 
 from bs4 import BeautifulSoup
 from mechanicalsoup import StatefulBrowser
@@ -10,15 +10,23 @@ from mechanicalsoup import StatefulBrowser
 from . import (
     AUTH_URL,
     BUS_PUSHPIN_REGEX,
+    BUS_STOP_KEYS,
     COORDINATE_KEYS,
     FORM_FIELDS,
     PASSENGER_INFO_KEYS,
     REFRESH_URL,
     TIME_REGEX,
-    TIME_SPANS,
-    BUS_STOP_KEYS,
+    TIME_SPAN_KEYS,
 )
-from .api_types import AllCoordinates, AllSchedules, Coordinates, Schedule
+from .api_types import (
+    AllCoordinates,
+    AllSchedules,
+    CoordinateData,
+    Coordinates,
+    PassengerInfo,
+    Schedule,
+    ScheduleData,
+)
 from .exceptions import (
     InvalidAuthorizationException,
     NotAuthenticatedException,
@@ -38,9 +46,9 @@ class HctbApi:
             "password": password,
             "code": code,
         }
-        self.passenger_info = dict.fromkeys(PASSENGER_INFO_KEYS, "")
+        self.passenger_info: PassengerInfo = dict.fromkeys(PASSENGER_INFO_KEYS, "")
         self.time_spans: AllSchedules = {
-            span: dict.fromkeys(BUS_STOP_KEYS, {}) for span in TIME_SPANS
+            span: dict.fromkeys(BUS_STOP_KEYS, {}) for span in TIME_SPAN_KEYS
         }
 
         self.browser = StatefulBrowser()
@@ -66,7 +74,7 @@ class HctbApi:
         self.passenger_info = self._parse_passenger_info()
         self.authenticated = True
 
-    def _parse_passenger_info(self) -> Dict[str, str]:
+    def _parse_passenger_info(self) -> PassengerInfo:
         if self.soup is None:
             raise NotAuthenticatedException()
 
@@ -100,11 +108,11 @@ class HctbApi:
 
         return self.soup.find(string=span).parent["value"]
 
-    def _get_time_data(self, time_span_id: str) -> List[Tuple[str, str]]:
+    def _get_time_data(self, time_span_id: str) -> ScheduleData:
         response_data = self._get_api_response(time_span_id)
         return re.findall(TIME_REGEX, response_data)
 
-    def _get_coordinate_data(self, time_span_id: str) -> List[Tuple[str, str]]:
+    def _get_coordinate_data(self, time_span_id: str) -> CoordinateData:
         response_data = self._get_api_response(time_span_id)
         return re.findall(BUS_PUSHPIN_REGEX, response_data)
 
@@ -112,7 +120,7 @@ class HctbApi:
         self, span: Optional[str] = None
     ) -> Union[Schedule, AllSchedules,]:
         time_spans: AllSchedules = {
-            span: dict.fromkeys(BUS_STOP_KEYS, {}) for span in TIME_SPANS
+            span: dict.fromkeys(BUS_STOP_KEYS, {}) for span in TIME_SPAN_KEYS
         }
 
         def process_span(span: str):
@@ -142,7 +150,7 @@ class HctbApi:
             process_span(span)
             return time_spans[span]
 
-        for span in TIME_SPANS:
+        for span in TIME_SPAN_KEYS:
             if span == "MID":  # Skip, as we don't have data for this yet
                 continue
             process_span(span)
@@ -153,7 +161,7 @@ class HctbApi:
         self, span: Optional[str]
     ) -> Union[Coordinates, AllCoordinates]:
         coordinates: AllCoordinates = {
-            span: dict.fromkeys(COORDINATE_KEYS) for span in TIME_SPANS
+            span: dict.fromkeys(COORDINATE_KEYS) for span in TIME_SPAN_KEYS
         }
 
         def process_span(span: str):
@@ -169,7 +177,7 @@ class HctbApi:
             process_span(span)
             return coordinates[span]
 
-        for span in TIME_SPANS:
+        for span in TIME_SPAN_KEYS:
             if span == "MID":  # Skip, as we don't have data for this yet
                 continue
             process_span(span)
@@ -187,7 +195,7 @@ class HctbApi:
 
         return self.authenticated
 
-    def get_passenger_info(self) -> dict[str, str]:
+    def get_passenger_info(self) -> PassengerInfo:
         """Get passenger info from HCTB."""
         if not self.authenticated:
             raise NotAuthenticatedException()
