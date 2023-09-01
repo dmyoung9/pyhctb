@@ -18,6 +18,7 @@ from . import (
     TIME_SPANS,
     BUS_STOP_KEYS,
 )
+from .api_types import AllCoordinates, AllSchedules, Coordinates, Schedule
 from .exceptions import (
     InvalidAuthorizationException,
     NotAuthenticatedException,
@@ -38,7 +39,7 @@ class HctbApi:
             "code": code,
         }
         self.passenger_info = dict.fromkeys(PASSENGER_INFO_KEYS, "")
-        self.time_spans: Dict[str, Dict[str, Dict[str, Optional[str]]]] = {
+        self.time_spans: AllSchedules = {
             span: dict.fromkeys(BUS_STOP_KEYS, {}) for span in TIME_SPANS
         }
 
@@ -84,7 +85,7 @@ class HctbApi:
     def _get_api_response(self, time_span_id: str) -> str:
         response = self.browser.post(
             REFRESH_URL,
-            json={**self.passenger_info, "timeSpanId": time_span_id, "wait": "false"},
+            json={**self.passenger_info, "ScheduleId": time_span_id, "wait": "false"},
             timeout=5,
         )
 
@@ -103,17 +104,14 @@ class HctbApi:
         response_data = self._get_api_response(time_span_id)
         return re.findall(TIME_REGEX, response_data)
 
-    def _get_coordinate_data(self, time_span_id: str):
+    def _get_coordinate_data(self, time_span_id: str) -> List[Tuple[str, str]]:
         response_data = self._get_api_response(time_span_id)
         return re.findall(BUS_PUSHPIN_REGEX, response_data)
 
     def _parse_time_span(
         self, span: Optional[str] = None
-    ) -> Union[
-        Dict[str, Dict[str, Optional[str]]],
-        Dict[str, Dict[str, Dict[str, Optional[str]]]],
-    ]:
-        time_spans: Dict[str, Dict[str, Dict[str, Optional[str]]]] = {
+    ) -> Union[Schedule, AllSchedules,]:
+        time_spans: AllSchedules = {
             span: dict.fromkeys(BUS_STOP_KEYS, {}) for span in TIME_SPANS
         }
 
@@ -153,8 +151,8 @@ class HctbApi:
 
     def _parse_coordinates(
         self, span: Optional[str]
-    ) -> Union[Dict[str, Optional[float]], Dict[str, Dict[str, Optional[float]]]]:
-        coordinates: Dict[str, Dict[str, Optional[float]]] = {
+    ) -> Union[Coordinates, AllCoordinates]:
+        coordinates: AllCoordinates = {
             span: dict.fromkeys(COORDINATE_KEYS) for span in TIME_SPANS
         }
 
@@ -201,12 +199,7 @@ class HctbApi:
 
     def get_bus_schedule(
         self, time_span: Optional[str] = None
-    ) -> Optional[
-        Union[
-            Dict[str, Dict[str, Optional[str]]],
-            Dict[str, Dict[str, Dict[str, Optional[str]]]],
-        ]
-    ]:
+    ) -> Optional[Union[Schedule, AllSchedules]]:
         """Get bus schedule from HCTB."""
         if not self.authenticated:
             raise NotAuthenticatedException()
@@ -218,9 +211,7 @@ class HctbApi:
 
     def get_bus_coordinates(
         self, time_span: Optional[str] = None
-    ) -> Optional[
-        Union[Dict[str, Optional[float]], Dict[str, Dict[str, Optional[float]]]]
-    ]:
+    ) -> Optional[Union[Coordinates, AllCoordinates]]:
         """Get bus coordinates from HCTB."""
 
         if not self.authenticated:
