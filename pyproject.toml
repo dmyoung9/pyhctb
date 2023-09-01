@@ -8,8 +8,9 @@ homepage = "https://www.github.com/dmyoung9/pyhctb/"
 
 [tool.poetry.dependencies]
 python = "^3.11"
-selenium = "^4.11.2"
 requests = "^2.31.0"
+bs4 = "^0.0.1"
+mechanicalsoup = "^1.3.0"
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^3.2.2"
