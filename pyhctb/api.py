@@ -1,137 +1,232 @@
 """API for getting data from Here Comes The Bus"""
 
+from datetime import datetime
 import re
-from typing import Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
-import requests
+from bs4 import BeautifulSoup
+from mechanicalsoup import StatefulBrowser
 
-from selenium import webdriver
-from selenium.webdriver.remote.webdriver import WebDriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.options import ArgOptions
-
-from . import AUTH_URL, BUS_PUSHPIN_REGEX, ELEMENTS, HEADERS, REFRESH_URL
+from . import (
+    AUTH_URL,
+    BUS_PUSHPIN_REGEX,
+    COORDINATE_KEYS,
+    FORM_FIELDS,
+    PASSENGER_INFO_KEYS,
+    REFRESH_URL,
+    TIME_REGEX,
+    TIME_SPANS,
+    BUS_STOP_KEYS,
+)
 from .exceptions import (
     InvalidAuthorizationException,
-    PassengerDataException,
+    NotAuthenticatedException,
+    PassengerInfoException,
     UnsuccessfulRequestException,
 )
-
-
-def _build_browser_options() -> ArgOptions:
-    options = webdriver.ChromeOptions()
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-setuid-sandbox")
-    options.add_argument("--disable-logging")
-    options.add_argument("--log-level=3")
-
-    return options
-
-
-def _build_webdriver(options: ArgOptions) -> WebDriver:
-    return webdriver.Chrome(options=options)
+from .utils import convert_to_timestamp, convert_coordinates
 
 
 class HctbApi:
     """API client class for Here Comes The Bus"""
 
     def __init__(self, username: str, password: str, code: str):
-        self.username = username
-        self.password = password
-        self.code = code
+        self.authenticated = False
+        self.credentials = {
+            "username": username,
+            "password": password,
+            "code": code,
+        }
+        self.passenger_info = dict.fromkeys(PASSENGER_INFO_KEYS, "")
+        self.time_spans: Dict[str, Dict[str, Dict[str, Optional[str]]]] = {
+            span: dict.fromkeys(BUS_STOP_KEYS, {}) for span in TIME_SPANS
+        }
 
-        self.browser_options = _build_browser_options()
-        self.headers = HEADERS
+        self.browser = StatefulBrowser()
+        self.soup: Optional[BeautifulSoup] = None
 
-    def _perform_login(self, driver: WebDriver) -> dict[str, str]:
-        driver.get(AUTH_URL)
+    def _perform_login(self) -> None:
+        self.browser.open(AUTH_URL)
+        self.browser.select_form()
 
-        driver.find_element(By.NAME, ELEMENTS["user"]).send_keys(self.username)
-        driver.find_element(By.NAME, ELEMENTS["password"]).send_keys(self.password)
-        driver.find_element(By.NAME, ELEMENTS["code"]).send_keys(self.code)
+        for key, cred in self.credentials.items():
+            self.browser[FORM_FIELDS[key]] = cred
 
-        driver.find_element(By.NAME, ELEMENTS["auth_button"]).click()
-        driver.implicitly_wait(10)
+        self.browser.submit_selected()
 
-        return {cookie["name"]: str(cookie["value"]) for cookie in driver.get_cookies()}
+        cookies = {c.name: str(c.value) for c in self.browser.get_cookiejar()}
+        if ".ASPXFORMSAUTH" not in cookies:
+            self.authenticated = False
+            raise InvalidAuthorizationException()
 
-    def _update_headers_with_cookies(self, cookies: dict[str, str]) -> None:
-        cookie_str = "; ".join([f"{name}={value}" for name, value in cookies.items()])
-        self.headers["cookie"] = cookie_str
+        map_page = self.browser.get(REFRESH_URL)
+        self.soup = BeautifulSoup(map_page.content, "html.parser")
 
-    def _get_passenger_data(self, driver: WebDriver) -> Optional[dict]:
-        selected_options = driver.find_elements(
-            By.CSS_SELECTOR, 'option[selected="selected"]'
+        self.passenger_info = self._parse_passenger_info()
+        self.authenticated = True
+
+    def _parse_passenger_info(self) -> Dict[str, str]:
+        if self.soup is None:
+            raise NotAuthenticatedException()
+
+        selected_options = self.soup.select('option[selected="selected"]')
+
+        passenger_info = dict.fromkeys(PASSENGER_INFO_KEYS, "")
+        if len(selected_options) < 1:
+            raise PassengerInfoException()
+
+        name = selected_options[1].text
+        person = selected_options[1]["value"]
+
+        passenger_info = dict(zip(PASSENGER_INFO_KEYS, (person, name)))
+        return passenger_info
+
+    def _get_api_response(self, time_span_id: str) -> str:
+        response = self.browser.post(
+            REFRESH_URL,
+            json={**self.passenger_info, "timeSpanId": time_span_id, "wait": "false"},
+            timeout=5,
         )
-
-        if len(selected_options) >= 3:
-            name = selected_options[1].get_attribute("innerHTML")
-            person = selected_options[1].get_attribute("value")
-            time = selected_options[2].get_attribute("value")
-
-            return {
-                "legacyID": person,
-                "name": name,
-                "timeSpanId": time,
-                "wait": "false",
-            }
-
-        return None
-
-    @staticmethod
-    def _parse_coordinates(
-        response_data: str,
-    ) -> Union[Tuple[str, str], Tuple[None, None]]:
-        if "SetBusPushPin" in response_data:
-            return re.findall(BUS_PUSHPIN_REGEX, response_data)[0]
-        return None, None
-
-    def _get_api_response(self, passenger_data) -> dict:
-        response = requests.post(
-            REFRESH_URL, headers=self.headers, json=passenger_data, timeout=5
-        )
-
-        passenger_data.pop("wait", None)
 
         if not response.ok:
             raise UnsuccessfulRequestException(response.status_code)
 
-        response_json = response.json()
-        latitude, longitude = HctbApi._parse_coordinates(response_json["d"])
+        return response.json()["d"]
 
-        return passenger_data | {
-            "latitude": latitude,
-            "longitude": longitude,
+    def _get_time_span_id(self, span: str) -> str:
+        if self.soup is None:
+            raise NotAuthenticatedException()
+
+        return self.soup.find(string=span).parent["value"]
+
+    def _get_time_data(self, time_span_id: str) -> List[Tuple[str, str]]:
+        response_data = self._get_api_response(time_span_id)
+        return re.findall(TIME_REGEX, response_data)
+
+    def _get_coordinate_data(self, time_span_id: str):
+        response_data = self._get_api_response(time_span_id)
+        return re.findall(BUS_PUSHPIN_REGEX, response_data)
+
+    def _parse_time_span(
+        self, span: Optional[str] = None
+    ) -> Union[
+        Dict[str, Dict[str, Optional[str]]],
+        Dict[str, Dict[str, Dict[str, Optional[str]]]],
+    ]:
+        time_spans: Dict[str, Dict[str, Dict[str, Optional[str]]]] = {
+            span: dict.fromkeys(BUS_STOP_KEYS, {}) for span in TIME_SPANS
         }
 
-    def authenticate(self, driver: Optional[WebDriver] = None) -> dict:
+        def process_span(span: str):
+            time_span_id = self._get_time_span_id(span)
+            time_span_matches = self._get_time_data(time_span_id)
+            if not time_span_matches:
+                return
+
+            today = datetime.now()
+            bus, school = (
+                time_span_matches[:2] if span == "AM" else time_span_matches[:2][::-1]
+            )
+
+            time_spans[span].update(
+                dict(
+                    zip(
+                        BUS_STOP_KEYS,
+                        (
+                            convert_to_timestamp(bus, today),
+                            convert_to_timestamp(school, today),
+                        ),
+                    )
+                )
+            )
+
+        if span is not None:
+            process_span(span)
+            return time_spans[span]
+
+        for span in TIME_SPANS:
+            if span == "MID":  # Skip, as we don't have data for this yet
+                continue
+            process_span(span)
+
+        return time_spans
+
+    def _parse_coordinates(
+        self, span: Optional[str]
+    ) -> Union[Dict[str, Optional[float]], Dict[str, Dict[str, Optional[float]]]]:
+        coordinates: Dict[str, Dict[str, Optional[float]]] = {
+            span: dict.fromkeys(COORDINATE_KEYS) for span in TIME_SPANS
+        }
+
+        def process_span(span: str):
+            time_span_id = self._get_time_span_id(span)
+            coordinate_matches = self._get_coordinate_data(time_span_id)
+            if not coordinate_matches:
+                return
+
+            converted_coordinates = convert_coordinates(coordinate_matches[0])
+            coordinates[span].update(converted_coordinates)
+
+        if span is not None:
+            process_span(span)
+            return coordinates[span]
+
+        for span in TIME_SPANS:
+            if span == "MID":  # Skip, as we don't have data for this yet
+                continue
+            process_span(span)
+
+        return coordinates
+
+    def authenticate(self) -> bool:
         """Authenticate and retrieve cookies from HCTB."""
-        if driver is not None:
-            cookies = self._perform_login(driver)
-        else:
-            with _build_webdriver(options=self.browser_options) as driver:
-                cookies = self._perform_login(driver)
+        try:
+            self._perform_login()
+        except InvalidAuthorizationException:
+            return False
+        except PassengerInfoException:
+            return False
 
-        if ".ASPXFORMSAUTH" not in cookies:
-            raise InvalidAuthorizationException()
+        return self.authenticated
 
-        return cookies
+    def get_passenger_info(self) -> dict[str, str]:
+        """Get passenger info from HCTB."""
+        if not self.authenticated:
+            raise NotAuthenticatedException()
 
-    def get_bus_data(self) -> dict:
-        """Get bus coordinate response from HCTB."""
-        with _build_webdriver(options=self.browser_options) as driver:
-            cookies = self.authenticate(driver)
-            if cookies is None:
-                raise InvalidAuthorizationException()
+        info = self.passenger_info.copy()
+        info.pop("legacyID", None)
 
-            self._update_headers_with_cookies(cookies)
+        return info
 
-            passenger_data = self._get_passenger_data(driver)
-            if passenger_data is None:
-                raise PassengerDataException()
+    def get_bus_schedule(
+        self, time_span: Optional[str] = None
+    ) -> Optional[
+        Union[
+            Dict[str, Dict[str, Optional[str]]],
+            Dict[str, Dict[str, Dict[str, Optional[str]]]],
+        ]
+    ]:
+        """Get bus schedule from HCTB."""
+        if not self.authenticated:
+            raise NotAuthenticatedException()
 
         try:
-            return self._get_api_response(passenger_data)
-        except UnsuccessfulRequestException as ure:
-            raise ure
+            return self._parse_time_span(time_span)
+        except UnsuccessfulRequestException:
+            return None
+
+    def get_bus_coordinates(
+        self, time_span: Optional[str] = None
+    ) -> Optional[
+        Union[Dict[str, Optional[float]], Dict[str, Dict[str, Optional[float]]]]
+    ]:
+        """Get bus coordinates from HCTB."""
+
+        if not self.authenticated:
+            raise NotAuthenticatedException()
+
+        try:
+            return self._parse_coordinates(time_span)
+        except UnsuccessfulRequestException:
+            return None
