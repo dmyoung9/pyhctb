@@ -2,7 +2,7 @@
 
 import argparse
 import json
-from typing import Tuple
+from typing import Optional, Tuple
 
 from .api import HctbApi
 from .exceptions import InvalidAuthorizationException
@@ -16,7 +16,7 @@ ARGS = (
 )
 
 
-def _parse_cli_args() -> Tuple[str, str, str, str]:
+def _parse_cli_args() -> Tuple[str, str, str, Optional[str]]:
     parser = argparse.ArgumentParser()
     for arg in ARGS:
         parser.add_argument(*arg[:2], required=arg[2], help=arg[3])
@@ -26,7 +26,7 @@ def _parse_cli_args() -> Tuple[str, str, str, str]:
     username = str(args.username)
     password = str(args.password)
     code = str(args.code)
-    time_span = str(args.time)
+    time_span = str(args.time) if args.time is not None else None
 
     return (username, password, code, time_span)
 
