@@ -8,15 +8,22 @@ class InvalidAuthorizationException(Exception):
         super().__init__("Invalid authorization!")
 
 
-class PassengerDataException(Exception):
-    """Raised when passenger data cannot be parsed."""
+class NotAuthenticatedException(Exception):
+    """Raised when not authenticated."""
 
     def __init__(self):
-        super().__init__("Couldn't parse passenger data!")
+        super().__init__("Not authenticated!")
+
+
+class PassengerInfoException(Exception):
+    """Raised when passenger info cannot be parsed."""
+
+    def __init__(self):
+        super().__init__("Couldn't parse passenger info!")
 
 
 class UnsuccessfulRequestException(Exception):
     """Raised when a connection cannot be established."""
 
     def __init__(self, status_code):
-        super().__init__(f"Request unsuccessful: {status_code}")
+        super().__init__(f"Request unsuccessful! - {status_code}")
