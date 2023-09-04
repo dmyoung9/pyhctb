@@ -1,13 +1,15 @@
 """Type definitions for the API"""
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Literal, Optional, Union
 
-Schedule = Dict[str, Dict[str, Optional[str]]]
-AllSchedules = Dict[str, Schedule]
-ScheduleData = List[Tuple[str, str]]
+BusStopKey = Literal["bus_stop", "school_stop"]
+CoordinateKey = Literal["latitude", "longitude"]
+PassengerInfoKey = Literal["legacyID", "name"]
+ScheduleKey = Literal["actual", "schedule"]
+StopDataKeys = Literal["type", "name", "schedule", "coordinates"]
+TimeSpanKey = Literal["AM", "MID", "PM"]
 
-Coordinates = Dict[str, Optional[float]]
-AllCoordinates = Dict[str, Coordinates]
-CoordinateData = List[Tuple[str, str]]
-
-PassengerInfo = Dict[str, str]
+PassengerInfo = Dict[PassengerInfoKey, str]
+Coordinates = Dict[CoordinateKey, Optional[float]]
+Schedule = Dict[ScheduleKey, Optional[int]]
+StopData = Dict[StopDataKeys, Union[Optional[str], Schedule, Coordinates]]

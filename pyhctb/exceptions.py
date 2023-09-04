@@ -12,7 +12,7 @@ class NotAuthenticatedException(Exception):
     """Raised when not authenticated."""
 
     def __init__(self):
-        super().__init__("Not authenticated!")
+        super().__init__("Operation can not be performed while unauthenticated.")
 
 
 class PassengerInfoException(Exception):

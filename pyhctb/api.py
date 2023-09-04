@@ -1,60 +1,40 @@
 """API for getting data from Here Comes The Bus"""
 
-from datetime import datetime
-import re
-from typing import Optional, Union
+from typing import List, Optional, Union
 
 from bs4 import BeautifulSoup
 from mechanicalsoup import StatefulBrowser
 
 from . import (
     AUTH_URL,
-    BUS_PUSHPIN_REGEX,
-    BUS_STOP_KEYS,
-    COORDINATE_KEYS,
     FORM_FIELDS,
-    PASSENGER_INFO_KEYS,
+    LOGGER,
     REFRESH_URL,
-    TIME_REGEX,
-    TIME_SPAN_KEYS,
 )
-from .api_types import (
-    AllCoordinates,
-    AllSchedules,
-    CoordinateData,
-    Coordinates,
-    PassengerInfo,
-    Schedule,
-    ScheduleData,
-)
+from .api_types import PassengerInfo, TimeSpanKey
 from .exceptions import (
     InvalidAuthorizationException,
     NotAuthenticatedException,
     PassengerInfoException,
     UnsuccessfulRequestException,
 )
-from .utils import convert_to_timestamp, convert_coordinates
 
 
 class HctbApi:
     """API client class for Here Comes The Bus"""
 
     def __init__(self, username: str, password: str, code: str):
-        self.authenticated = False
         self.credentials = {
             "username": username,
             "password": password,
             "code": code,
         }
-        self.passenger_info: PassengerInfo = dict.fromkeys(PASSENGER_INFO_KEYS, "")
-        self.time_spans: AllSchedules = {
-            span: dict.fromkeys(BUS_STOP_KEYS, {}) for span in TIME_SPAN_KEYS
-        }
 
+        self.authenticated = False
         self.browser = StatefulBrowser()
         self.soup: Optional[BeautifulSoup] = None
 
-    def _perform_login(self) -> None:
+    def _perform_login(self) -> bool:
         self.browser.open(AUTH_URL)
         self.browser.select_form()
 
@@ -64,168 +44,172 @@ class HctbApi:
         self.browser.submit_selected()
 
         cookies = {c.name: str(c.value) for c in self.browser.get_cookiejar()}
-        if ".ASPXFORMSAUTH" not in cookies:
-            self.authenticated = False
+        self.authenticated = ".ASPXFORMSAUTH" in cookies
+
+        if not self.authenticated:
             raise InvalidAuthorizationException()
 
         map_page = self.browser.get(REFRESH_URL)
         self.soup = BeautifulSoup(map_page.content, "html.parser")
+        return self.authenticated
 
-        self.passenger_info = self._parse_passenger_info()
-        self.authenticated = True
-
-    def _parse_passenger_info(self) -> PassengerInfo:
-        if self.soup is None:
+    def _get_response(self, passenger: PassengerInfo, timespan_id: str) -> str:
+        if not self.authenticated and not self._perform_login():
             raise NotAuthenticatedException()
 
-        selected_options = self.soup.select('option[selected="selected"]')
+        post_data = {
+            **passenger,
+            "timeSpanId": timespan_id,
+            "wait": "false",
+        }
 
-        passenger_info = dict.fromkeys(PASSENGER_INFO_KEYS, "")
-        if len(selected_options) < 1:
-            raise PassengerInfoException()
-
-        name = selected_options[1].text
-        person = selected_options[1]["value"]
-
-        passenger_info = dict(zip(PASSENGER_INFO_KEYS, (person, name)))
-        return passenger_info
-
-    def _get_api_response(self, time_span_id: str) -> str:
-        response = self.browser.post(
-            REFRESH_URL,
-            json={**self.passenger_info, "timeSpanId": time_span_id, "wait": "false"},
-            timeout=5,
-        )
+        response = self.browser.post(REFRESH_URL, json=post_data)
 
         if not response.ok:
             raise UnsuccessfulRequestException(response.status_code)
 
         return response.json()["d"]
 
-    def _get_time_span_id(self, span: str) -> str:
-        if self.soup is None:
+    def _get_timespan_id(self, timespan: TimeSpanKey) -> str:
+        if self.soup is None and not self._perform_login():
             raise NotAuthenticatedException()
 
-        return self.soup.find(string=span).parent["value"]
+        return self.soup.find(string=timespan).parent["value"]
 
-    def _get_time_data(self, time_span_id: str) -> ScheduleData:
-        response_data = self._get_api_response(time_span_id)
-        return re.findall(TIME_REGEX, response_data)
+    def _get_passenger_list(self) -> List[PassengerInfo]:
+        if self.soup is None and not self._perform_login():
+            raise NotAuthenticatedException()
 
-    def _get_coordinate_data(self, time_span_id: str) -> CoordinateData:
-        response_data = self._get_api_response(time_span_id)
-        return re.findall(BUS_PUSHPIN_REGEX, response_data)
-
-    def _parse_time_span(
-        self, span: Optional[str] = None
-    ) -> Union[Schedule, AllSchedules,]:
-        time_spans: AllSchedules = {
-            span: dict.fromkeys(BUS_STOP_KEYS, {}) for span in TIME_SPAN_KEYS
-        }
-
-        def process_span(span: str):
-            time_span_id = self._get_time_span_id(span)
-            time_span_matches = self._get_time_data(time_span_id)
-            if not time_span_matches:
-                return
-
-            today = datetime.now()
-            bus, school = (
-                time_span_matches[:2] if span == "AM" else time_span_matches[:2][::-1]
+        passenger_field = FORM_FIELDS["passenger"]
+        if fields := self.soup.select(f'select[name="{passenger_field}"]'):
+            return (
+                [
+                    {"legacyID": passenger["value"], "name": passenger.text}
+                    for passenger in passengers
+                ]
+                if (passengers := [o for o in fields[0].children if o != "\n"])
+                else []
             )
 
-            time_spans[span].update(
-                dict(
-                    zip(
-                        BUS_STOP_KEYS,
-                        (
-                            convert_to_timestamp(bus, today),
-                            convert_to_timestamp(school, today),
-                        ),
-                    )
-                )
-            )
+        raise PassengerInfoException()
 
-        if span is not None:
-            process_span(span)
-            return time_spans[span]
+    # def _get_time_data(self, time_span_id: str) -> ScheduleData:
+    #     response_data = self._get_api_response(time_span_id)
+    #     return re.findall(TIME_REGEX, response_data)
 
-        for span in TIME_SPAN_KEYS:
-            if span == "MID":  # Skip, as we don't have data for this yet
-                continue
-            process_span(span)
+    # def _get_coordinate_data(self, time_span_id: str) -> CoordinateData:
+    #     response_data = self._get_api_response(time_span_id)
+    #     return re.findall(BUS_PUSHPIN_REGEX, response_data)
 
-        return time_spans
+    # def _parse_time_span(
+    #     self, span: Optional[str] = None
+    # ) -> Union[Schedule, AllSchedules,]:
+    #     time_spans: AllSchedules = {
+    #         span: dict.fromkeys(BUS_STOP_KEYS, {}) for span in TIME_SPAN_KEYS
+    #     }
 
-    def _parse_coordinates(
-        self, span: Optional[str]
-    ) -> Union[Coordinates, AllCoordinates]:
-        coordinates: AllCoordinates = {
-            span: dict.fromkeys(COORDINATE_KEYS) for span in TIME_SPAN_KEYS
-        }
+    #     def process_span(span: str):
+    #         time_span_id = self._get_time_span_id(span)
+    #         time_span_matches = self._get_time_data(time_span_id)
+    #         if not time_span_matches:
+    #             return
 
-        def process_span(span: str):
-            time_span_id = self._get_time_span_id(span)
-            coordinate_matches = self._get_coordinate_data(time_span_id)
-            if not coordinate_matches:
-                return
+    #         today = datetime.now()
+    #         bus, school = (
+    #             time_span_matches[:2] if span == "AM" else time_span_matches[:2][::-1]
+    #         )
 
-            converted_coordinates = convert_coordinates(coordinate_matches[0])
-            coordinates[span].update(converted_coordinates)
+    #         time_spans[span].update(
+    #             dict(
+    #                 zip(
+    #                     BUS_STOP_KEYS,
+    #                     (
+    #                         convert_to_timestamp(bus, today),
+    #                         convert_to_timestamp(school, today),
+    #                     ),
+    #                 )
+    #             )
+    #         )
 
-        if span is not None:
-            process_span(span)
-            return coordinates[span]
+    #     if span is not None:
+    #         process_span(span)
+    #         return time_spans[span]
 
-        for span in TIME_SPAN_KEYS:
-            if span == "MID":  # Skip, as we don't have data for this yet
-                continue
-            process_span(span)
+    #     for span in TIME_SPAN_KEYS:
+    #         if span == "MID":  # Skip, as we don't have data for this yet
+    #             continue
+    #         process_span(span)
 
-        return coordinates
+    #     return time_spans
+
+    # def _parse_coordinates(
+    #     self, span: Optional[str]
+    # ) -> Union[Coordinates, AllCoordinates]:
+    #     coordinates: AllCoordinates = {
+    #         span: dict.fromkeys(COORDINATE_KEYS) for span in TIME_SPAN_KEYS
+    #     }
+
+    #     def process_span(span: str):
+    #         time_span_id = self._get_time_span_id(span)
+    #         coordinate_matches = self._get_coordinate_data(time_span_id)
+    #         if not coordinate_matches:
+    #             return
+
+    #         converted_coordinates = convert_coordinates(coordinate_matches[0])
+    #         coordinates[span].update(converted_coordinates)
+
+    #     if span is not None:
+    #         process_span(span)
+    #         return coordinates[span]
+
+    #     for span in TIME_SPAN_KEYS:
+    #         if span == "MID":  # Skip, as we don't have data for this yet
+    #             continue
+    #         process_span(span)
+
+    #     return coordinates
 
     def authenticate(self) -> bool:
         """Authenticate and retrieve cookies from HCTB."""
         try:
-            self._perform_login()
-        except InvalidAuthorizationException:
-            return False
-        except PassengerInfoException:
-            return False
+            return self._perform_login()
+        except InvalidAuthorizationException as iae:
+            LOGGER.error(iae)
 
-        return self.authenticated
-
-    def get_passenger_info(self) -> PassengerInfo:
+    def get_passenger_info(
+        self, passenger: Optional[PassengerInfo] = None
+    ) -> Optional[Union[PassengerInfo, List[PassengerInfo]]]:
         """Get passenger info from HCTB."""
-        if not self.authenticated:
-            raise NotAuthenticatedException()
-
-        info = self.passenger_info.copy()
-        info.pop("legacyID", None)
-
-        return info
-
-    def get_bus_schedule(
-        self, time_span: Optional[str] = None
-    ) -> Optional[Union[Schedule, AllSchedules]]:
-        """Get bus schedule from HCTB."""
-        if not self.authenticated:
-            raise NotAuthenticatedException()
-
         try:
-            return self._parse_time_span(time_span)
-        except UnsuccessfulRequestException:
-            return None
+            passengers = self._get_passenger_list()
+        except NotAuthenticatedException as nae:
+            LOGGER.error(nae)
+        except PassengerInfoException as pie:
+            LOGGER.error(pie)
 
-    def get_bus_coordinates(
-        self, time_span: Optional[str] = None
-    ) -> Optional[Union[Coordinates, AllCoordinates]]:
-        """Get bus coordinates from HCTB."""
+        if passenger is None:
+            return passengers
 
-        if not self.authenticated:
-            raise NotAuthenticatedException()
+        return next(
+            (p for p in passengers if p == passenger),
+            None,
+        )
 
-        try:
-            return self._parse_coordinates(time_span)
-        except UnsuccessfulRequestException:
-            return None
+    # def get_bus_schedule(
+    #     self, passenger_id: Optional[str] = None, time_span: Optional[str] = None
+    # ) -> Optional[Union[Schedule, AllSchedules]]:
+    #     """Get bus schedule from HCTB."""
+    #     pass
+
+    # def get_bus_coordinates(
+    #     self, time_span: Optional[str] = None
+    # ) -> Optional[Union[Coordinates, AllCoordinates]]:
+    #     """Get bus coordinates from HCTB."""
+
+    #     if not self.authenticated:
+    #         raise NotAuthenticatedException()
+
+    #     try:
+    #         return self._parse_coordinates(time_span)
+    #     except UnsuccessfulRequestException:
+    #         return None
