@@ -163,7 +163,11 @@ def parse_bus_data(data: str):
         bus_number = extract_bus_number(stops_args[2])
         stops = [stop for stop in (first_stop, last_stop) if stop is not None]
 
-        return {"bus_number": bus_number, "stops": stops}
+        return {
+            "bus_number": bus_number,
+            "stops": stops,
+            "coordinates": parse_bus_coordinates(data),
+        }
 
     return None
 
