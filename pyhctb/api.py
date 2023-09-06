@@ -1,23 +1,35 @@
 """API for getting data from Here Comes The Bus"""
 
-from typing import List, Optional, Union
+import itertools
+from typing import Dict, List, Optional, Union
 
 from bs4 import BeautifulSoup
 from mechanicalsoup import StatefulBrowser
+
 
 from . import (
     AUTH_URL,
     FORM_FIELDS,
     LOGGER,
     REFRESH_URL,
+    TIME_SPAN_KEYS,
 )
-from .api_types import PassengerInfo, TimeSpanKey
+from .api_types import (
+    BusData,
+    BusDataKey,
+    Coordinates,
+    PassengerInfo,
+    PassengerInfoKey,
+    StopData,
+    TimeSpanKey,
+)
 from .exceptions import (
     InvalidAuthorizationException,
     NotAuthenticatedException,
     PassengerInfoException,
     UnsuccessfulRequestException,
 )
+from .parse import parse_bus_data
 
 
 class HctbApi:
@@ -58,11 +70,14 @@ class HctbApi:
             raise NotAuthenticatedException()
 
         post_data = {
-            **passenger,
+            **passenger,  # type: ignore
             "timeSpanId": timespan_id,
             "wait": "false",
         }
 
+        LOGGER.info(
+            "Getting response for %s at %s...", passenger["legacyID"], timespan_id
+        )
         response = self.browser.post(REFRESH_URL, json=post_data)
 
         if not response.ok:
@@ -74,14 +89,14 @@ class HctbApi:
         if self.soup is None and not self._perform_login():
             raise NotAuthenticatedException()
 
-        return self.soup.find(string=timespan).parent["value"]
+        return self.soup.find(string=timespan).parent["value"]  # type: ignore
 
     def _get_passenger_list(self) -> List[PassengerInfo]:
         if self.soup is None and not self._perform_login():
             raise NotAuthenticatedException()
 
         passenger_field = FORM_FIELDS["passenger"]
-        if fields := self.soup.select(f'select[name="{passenger_field}"]'):
+        if fields := self.soup.select(f'select[name="{passenger_field}"]'):  # type: ignore
             return (
                 [
                     {"legacyID": passenger["value"], "name": passenger.text}
@@ -93,82 +108,6 @@ class HctbApi:
 
         raise PassengerInfoException()
 
-    # def _get_time_data(self, time_span_id: str) -> ScheduleData:
-    #     response_data = self._get_api_response(time_span_id)
-    #     return re.findall(TIME_REGEX, response_data)
-
-    # def _get_coordinate_data(self, time_span_id: str) -> CoordinateData:
-    #     response_data = self._get_api_response(time_span_id)
-    #     return re.findall(BUS_PUSHPIN_REGEX, response_data)
-
-    # def _parse_time_span(
-    #     self, span: Optional[str] = None
-    # ) -> Union[Schedule, AllSchedules,]:
-    #     time_spans: AllSchedules = {
-    #         span: dict.fromkeys(BUS_STOP_KEYS, {}) for span in TIME_SPAN_KEYS
-    #     }
-
-    #     def process_span(span: str):
-    #         time_span_id = self._get_time_span_id(span)
-    #         time_span_matches = self._get_time_data(time_span_id)
-    #         if not time_span_matches:
-    #             return
-
-    #         today = datetime.now()
-    #         bus, school = (
-    #             time_span_matches[:2] if span == "AM" else time_span_matches[:2][::-1]
-    #         )
-
-    #         time_spans[span].update(
-    #             dict(
-    #                 zip(
-    #                     BUS_STOP_KEYS,
-    #                     (
-    #                         convert_to_timestamp(bus, today),
-    #                         convert_to_timestamp(school, today),
-    #                     ),
-    #                 )
-    #             )
-    #         )
-
-    #     if span is not None:
-    #         process_span(span)
-    #         return time_spans[span]
-
-    #     for span in TIME_SPAN_KEYS:
-    #         if span == "MID":  # Skip, as we don't have data for this yet
-    #             continue
-    #         process_span(span)
-
-    #     return time_spans
-
-    # def _parse_coordinates(
-    #     self, span: Optional[str]
-    # ) -> Union[Coordinates, AllCoordinates]:
-    #     coordinates: AllCoordinates = {
-    #         span: dict.fromkeys(COORDINATE_KEYS) for span in TIME_SPAN_KEYS
-    #     }
-
-    #     def process_span(span: str):
-    #         time_span_id = self._get_time_span_id(span)
-    #         coordinate_matches = self._get_coordinate_data(time_span_id)
-    #         if not coordinate_matches:
-    #             return
-
-    #         converted_coordinates = convert_coordinates(coordinate_matches[0])
-    #         coordinates[span].update(converted_coordinates)
-
-    #     if span is not None:
-    #         process_span(span)
-    #         return coordinates[span]
-
-    #     for span in TIME_SPAN_KEYS:
-    #         if span == "MID":  # Skip, as we don't have data for this yet
-    #             continue
-    #         process_span(span)
-
-    #     return coordinates
-
     def authenticate(self) -> bool:
         """Authenticate and retrieve cookies from HCTB."""
         try:
@@ -176,9 +115,9 @@ class HctbApi:
         except InvalidAuthorizationException as iae:
             LOGGER.error(iae)
 
-    def get_passenger_info(
-        self, passenger: Optional[PassengerInfo] = None
-    ) -> Optional[Union[PassengerInfo, List[PassengerInfo]]]:
+        return False
+
+    def get_passenger_info(self) -> Optional[Union[PassengerInfo, List[PassengerInfo]]]:
         """Get passenger info from HCTB."""
         try:
             passengers = self._get_passenger_list()
@@ -187,29 +126,85 @@ class HctbApi:
         except PassengerInfoException as pie:
             LOGGER.error(pie)
 
-        if passenger is None:
-            return passengers
+        return passengers
+
+    def get_scheduled_stops(
+        self,
+        timespan: Optional[TimeSpanKey] = None,
+        passenger_info: Optional[PassengerInfo] = None,
+    ) -> Optional[List[BusData]]:
+        try:
+            passengers = self._get_passenger_list()
+            timespan_ids = (
+                [self._get_timespan_id(timespan)]
+                if timespan is not None
+                else [self._get_timespan_id(span) for span in TIME_SPAN_KEYS]
+            )
+        except NotAuthenticatedException as nae:
+            LOGGER.error(nae)
+        except PassengerInfoException as pie:
+            LOGGER.error(pie)
+
+        schedules: List[
+            Dict[Union[PassengerInfoKey, BusDataKey], Union[str, StopData]]
+        ] = []
+        for passenger, timespan_id in itertools.product(passengers, timespan_ids):
+            try:
+                response = self._get_response(passenger, timespan_id)
+            except UnsuccessfulRequestException as ure:
+                LOGGER.error(ure)
+                return None
+
+            bus_data = parse_bus_data(response)
+
+            if bus_data is not None:
+                for schedule in schedules:
+                    if (passenger["legacyID"], bus_data["bus_number"]) == (
+                        schedule["legacyID"],
+                        schedule["bus_number"],
+                    ):
+                        schedule["stops"].extend(bus_data["stops"])
+                        break
+                else:
+                    schedules.append(
+                        {
+                            **passenger,  # type: ignore
+                            "bus_number": bus_data["bus_number"],
+                            "stops": bus_data["stops"],
+                        }
+                    )
+
+        if passenger_info is None:
+            return schedules
 
         return next(
-            (p for p in passengers if p == passenger),
+            (s for s in schedules if s["legacyID"] == passenger_info["legacyID"]),
             None,
         )
 
-    # def get_bus_schedule(
-    #     self, passenger_id: Optional[str] = None, time_span: Optional[str] = None
-    # ) -> Optional[Union[Schedule, AllSchedules]]:
-    #     """Get bus schedule from HCTB."""
-    #     pass
+    def get_bus_coordinates(self, timespan: TimeSpanKey):
+        try:
+            passengers = self._get_passenger_list()
+            timespan_id = self._get_timespan_id(timespan)
+        except NotAuthenticatedException as nae:
+            LOGGER.error(nae)
+        except PassengerInfoException as pie:
+            LOGGER.error(pie)
 
-    # def get_bus_coordinates(
-    #     self, time_span: Optional[str] = None
-    # ) -> Optional[Union[Coordinates, AllCoordinates]]:
-    #     """Get bus coordinates from HCTB."""
+        coordinates: Dict[str, Coordinates] = {}
+        for passenger in passengers:
+            try:
+                response = self._get_response(passenger, timespan_id)
+            except UnsuccessfulRequestException as ure:
+                LOGGER.error(ure)
+                return None
 
-    #     if not self.authenticated:
-    #         raise NotAuthenticatedException()
+            bus_data = parse_bus_data(response)
 
-    #     try:
-    #         return self._parse_coordinates(time_span)
-    #     except UnsuccessfulRequestException:
-    #         return None
+            if bus_data is not None:
+                if coordinates.get(bus_data["bus_number"]) is None:
+                    coordinates[bus_data["bus_number"]] = bus_data["coordinates"]
+                else:
+                    continue
+
+        return coordinates
