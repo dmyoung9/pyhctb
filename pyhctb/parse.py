@@ -4,7 +4,6 @@ from datetime import datetime
 import re
 from typing import Optional, Tuple
 
-from api_types import Coordinates, Schedule, StopData
 
 from . import (
     ACTUAL_TIME_REGEX,
@@ -14,6 +13,7 @@ from . import (
     SCHEDULE_KEYS,
     SCHEDULED_TIME_REGEX,
 )
+from .api_types import Coordinates, Schedule, StopData
 from .utils import (
     clean_data_string,
     extract_parenthesis_content,
@@ -27,7 +27,7 @@ def parse_stop_data(
     stop_info: Optional[str],
     stop_times: Optional[str],
     stop_coordinates: Tuple[Optional[str], Optional[str]],
-) -> StopData:
+) -> Optional[StopData]:
     """Parses data about a single bus stop"""
 
     stop_type, stop_name, timespan = (
@@ -172,7 +172,7 @@ def parse_bus_data(data: str):
     return None
 
 
-def parse_bus_coordinates(data: str) -> Coordinates:
+def parse_bus_coordinates(data: str) -> Optional[Coordinates]:
     """Parse bus coordinates from a response"""
 
     clean_data = clean_data_string(data)
@@ -190,3 +190,5 @@ def parse_bus_coordinates(data: str) -> Coordinates:
                 bus_args[1] if len(bus_args) > 1 else None,
             )
         )
+
+    return None
