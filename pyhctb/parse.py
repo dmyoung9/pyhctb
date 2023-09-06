@@ -101,7 +101,7 @@ def extract_stop_times(stop_times_str: Optional[str]) -> Schedule:
                 )
                 if match
                 else None
-                for match in (scheduled_match, actual_match)
+                for match in (actual_match, scheduled_match)
             ),
         )
     )
