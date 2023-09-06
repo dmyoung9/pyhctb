@@ -183,6 +183,6 @@ def parse_bus_coordinates(data: str) -> Coordinates:
         return format_coordinates(
             (
                 bus_args[0] if len(bus_args) > 0 else None,
-                bus_args[0] if len(bus_args) > 0 else None,
+                bus_args[1] if len(bus_args) > 1 else None,
             )
         )
