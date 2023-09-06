@@ -30,11 +30,13 @@ def parse_stop_data(
 ) -> StopData:
     """Parses data about a single bus stop"""
 
-    stop_type, stop_name = (
-        extract_stop_attributes(stop_info) if stop_info is not None else (None, None)
+    stop_type, stop_name, timespan = (
+        extract_stop_attributes(stop_info)
+        if stop_info is not None
+        else (None, None, None)
     )
 
-    if None in (stop_type, stop_name):
+    if None in (stop_type, stop_name, timespan):
         return None
 
     times = extract_stop_times(stop_times)
@@ -43,12 +45,15 @@ def parse_stop_data(
     return {
         "type": stop_type,
         "name": stop_name,
+        "timespan": timespan,
         "schedule": times,
         "coordinates": coordinates,
     }
 
 
-def extract_stop_attributes(stop: str) -> Tuple[Optional[str], Optional[str]]:
+def extract_stop_attributes(
+    stop: str,
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """Parses type and name of bus stop"""
 
     if stop is None:
@@ -57,7 +62,7 @@ def extract_stop_attributes(stop: str) -> Tuple[Optional[str], Optional[str]]:
     split_stop = stop.split(":")
 
     if len(split_stop) < 2:
-        return None, None
+        return None, None, None
 
     stop_type = (
         split_stop[0].strip('"').strip().lower().replace(" ", "_")
@@ -66,7 +71,10 @@ def extract_stop_attributes(stop: str) -> Tuple[Optional[str], Optional[str]]:
     )
     stop_name = split_stop[1].split("(")[0].strip() if split_stop is not None else None
 
-    return stop_type, stop_name
+    timespan_match = re.search(r"\((.*?)\)", stop)
+    timespan = timespan_match[1] if timespan_match else None
+
+    return stop_type, stop_name, timespan
 
 
 def extract_stop_times(stop_times_str: Optional[str]) -> Schedule:
@@ -106,8 +114,12 @@ def format_coordinates(coordinates: Tuple[Optional[str], Optional[str]]) -> Coor
         zip(
             COORDINATE_KEYS,
             (
-                float(coord.strip()) if coord not in ("0", None) else None
-                for coord in coordinates
+                float(coordinates[0].strip())  # type: ignore
+                if coordinates[0] not in ("0", None)
+                else None,
+                float(coordinates[1].strip())  # type: ignore
+                if coordinates[1] not in ("0", None)
+                else None,
             ),
         )
     )

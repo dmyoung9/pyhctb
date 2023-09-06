@@ -34,8 +34,8 @@ SCHEDULED_TIME_REGEX = r"Scheduled:\s*(\d{2}:\d{2}\s*(?:AM|PM))"
 DATE_PARSE_FORMAT = "%Y-%m-%d"
 TIME_PARSE_FORMAT = "%I:%M %p"
 
-BUS_STOP_KEYS = BusStopKey.__args__
-COORDINATE_KEYS = CoordinateKey.__args__
-PASSENGER_INFO_KEYS = PassengerInfoKey.__args__
-SCHEDULE_KEYS = ScheduleKey.__args__
-TIME_SPAN_KEYS = TimeSpanKey.__args__
+BUS_STOP_KEYS = BusStopKey.__args__  # type: ignore
+COORDINATE_KEYS = CoordinateKey.__args__  # type: ignore
+PASSENGER_INFO_KEYS = PassengerInfoKey.__args__  # type: ignore
+SCHEDULE_KEYS = ScheduleKey.__args__  # type: ignore
+TIME_SPAN_KEYS = TimeSpanKey.__args__  # type: ignore

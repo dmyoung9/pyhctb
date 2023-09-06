@@ -5,7 +5,7 @@ from datetime import datetime
 import time
 from typing import List
 
-import pytz
+import pytz  # type: ignore
 
 from . import (
     DATE_PARSE_FORMAT,
